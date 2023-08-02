@@ -1,6 +1,8 @@
 const { Client } = require('@notionhq/client');
 const readline = require('readline-sync');
 const moment = require('moment');
+const _ = require('lodash');
+const fs = require('fs');
 
 const notion = new Client({
     auth: process.env.NOTION_TOKEN
@@ -21,7 +23,6 @@ async function getDataFromNotion(level) {
         page_size: 200
     });
     return response.results
-
 }
 
 function getDataFromResponse(result) {
@@ -52,11 +53,11 @@ function getRandomData(items) {
 }
 
 const selectedItems = new Set()
-const fullData = {}
+let fullData = {}
 const LEVELS = {
-    must: 'Must Know',
-    should: 'Should Know',
-    good: 'Good to Know'
+    must: { name: 'Must Know', icon: '👍' },
+    should: { name: 'Should Know', icon: '✌️' },
+    good: { name: 'Good to Know', icon: '👍' }
 }
 
 async function confirm() {
@@ -78,11 +79,13 @@ async function confirm() {
         console.log("Confirm completed.")
     })
 }
+
 async function initFullData() {
-    console.log('Loading full data from Notion')
+    // return fullData = JSON.parse(fs.readFileSync('/tmp/notion.json'))
     for (let level in LEVELS) {
-        fullData[level] = getDataFromResponse(await getDataFromNotion(LEVELS[level]))
+        fullData[level] = getDataFromResponse(await getDataFromNotion(LEVELS[level].name))
     }
+    // await fs.writeFileSync('/tmp/notion.json', JSON.stringify(fullData), 'utf8');
 }
 
 function extractRandomData() {
@@ -98,12 +101,34 @@ function extractRandomData() {
     return randomData
 }
 
+function toMarkdown() {
+    let items = Array.from(selectedItems)
+    const grouped = _.groupBy(items, 'level')
+
+    const markdown = []
+    for (let levelName in grouped) {
+        const level = _.find(_.values(LEVELS), l => l.name == levelName)
+        markdown.push(`# ${ level.icon } ${ level.name}`, '')
+        grouped[levelName].forEach(item => {
+            markdown.push(`## [${ item.name } 🔗](${ item.url || '' })`)
+            markdown.push(`${item.tags.map(t => `#${ t }`).join(' ')} ${item.submitter}`)
+            markdown.push(`❓简介：${item.description || ''}`)
+            markdown.push(`📜场景：${item.typicalScenarios || ''}`)
+            markdown.push('')
+        })
+
+        markdown.push('')
+    }
+
+    console.log(markdown.join("\n"))
+}
+
 (async function () {
     await initFullData()
 
     let randomData = extractRandomData()
-    while(true) {
-        let answer =  readline.question('Type item numbers you like, e.g. 1358. Or (Q)uit/(S)ummary/(C)onfirm: ')
+    while (true) {
+        let answer = readline.question('Type item numbers you like, e.g. 1358. Or (Q)uit/(L)ist/(M)arkdown/(R)efresh/(P)ublish/(C)lear: ')
         if (!isNaN(answer)) {
             const indices = Array.from(answer.toString()).map(Number).map(n => n - 1);
             for (let index of indices) {
@@ -111,23 +136,31 @@ function extractRandomData() {
                     selectedItems.add(randomData[index])
                 }
             }
-            answer = 's'
+            answer = 'l'
         }
 
         switch (answer.toLowerCase()) {
             case 'q':
                 return;
-            case 's':
+            case 'l':
                 console.log("You have selected:");
                 console.log(Array.from(selectedItems).map(i => {
-                    return `- ${ i.level }: ${i.name}`
+                    return `- ${ i.level }: ${ i.name }`
                 }).join("\n"))
                 continue
-            case 'c':
-                console.log('Confirming...');
+            case 'm':
+                console.log('Writing...');
+                toMarkdown()
+                continue
+            case 'p':
+                console.log('Publishing...');
                 await confirm()
                 continue
-                // return;
+            case 'c':
+                selectedItems.clear()
+                console.log('Cleared all selected items.');
+                continue
+            // return;
             case 'r':
                 console.log('Refreshing');
                 randomData = extractRandomData();
